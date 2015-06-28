@@ -216,8 +216,12 @@ def list_workspaces_handler(database, opts):
     else:
         workspaces = database.running_workspaces()
 
-    for workspace in workspaces:
-        print(workspace)
+    if opts.verbose is False:
+        for workspace in workspaces:
+            print(workspace.name())
+    else:
+        for workspace in workspaces:
+            print(workspace.name() + ': ' + workspace.root())
 
 
 def workspace_name_handler(database, opts):
@@ -317,6 +321,8 @@ def build_parser():
     subparser = add_verb('list-workspaces', ['ls'], list_workspaces_handler)
     subparser.add_argument('-a', '--all', action='store_true',
                            help='List all known workspaces, not just running.')
+    subparser.add_argument('-v', '--verbose', action='store_true',
+                           help='Print all info about workspaces.')
 
     # workspace-name
     subparser = add_verb('workspace-name', ['name'], workspace_name_handler)
