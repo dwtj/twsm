@@ -1,0 +1,341 @@
+#!/usr/bin/env python3
+'''Implements the core functionality of the `twsm` application and its CLI.'''
+
+import argparse
+import os
+import os.path
+import subprocess
+import enum
+
+import yaml
+import json
+
+
+
+# Global Constants ############################################################
+
+# The default filename for tmux sources.
+DEFAULT_SOURCE_FILE = '.tmuxrc'
+
+# The location for the default `twsm` database.
+DEFAULT_DATABASE = '{}/.twsm/default.yml'.format(os.getenv("HOME"))
+
+HELP_MESSAGES = {
+    # Global Options:
+    'database':
+        'Specifies the location of the `twsm` database. Actions (e.g. '
+        'attach, list-workspaces, etc.) are executed with respect to the '
+        'database at this location. If this argument is not specified, the '
+        'default database location is used, that is, `{}`.'
+        .format(DEFAULT_DATABASE),
+
+    # Verb Options:
+    'attach':
+        r"Attaches the terminal to <workspace>. Starts it first if necessary.",
+
+    'list-workspaces':
+        r"Prints a list of all currently running `twsm` workspaces to STDOUT.",
+
+    'workspace-name':
+        r"Looks up the workspace name rooted at the given directory. If there "
+        r"is a workspace",
+
+    'dump-database-model':
+        r"Dumps the `twsm` database's model to stdout as JSON.",
+}
+
+
+# Exceptions ##################################################################
+
+class BadDatabaseError(Exception):
+    '''Thrown to signify that a user-defined database file is in some way
+    malformed.'''
+
+
+
+# Database Model Representations ##############################################
+
+class Workspace:
+    '''The representation for a `twsm` workspace object.'''
+
+    _model = None
+    _name = None
+    _root = None
+
+    def _init_name(self, model):
+        try:
+            self._name = model['name']
+        except ValueError:
+            msg = "Workspace can't be created from a model without `name`: {}"
+            msg = msg.format(model)
+            raise BadDatabaseError(msg)
+
+
+    def _init_root(self, model):
+        try:
+            self._root = model['root']
+        except ValueError:
+            msg = "Workspace can't be created from a model without `root`: {}"
+            msg = msg.format(model)
+            raise BadDatabaseError(msg)
+
+
+    def __init__(self, model):
+        '''Takes a singleton set whose key is a workspace name and whose value
+        is a dictionary of properties of that workspace.'''
+        self._model = model
+        self._init_name(model)
+        self._init_root(model)
+
+
+    def name(self):
+        '''Returns the name of this workspace.'''
+        return self._name
+
+
+    def root(self):
+        '''Returns the root directory of this workspace.'''
+        return self._root
+
+
+    def __str__(self):
+        return str(self._model)
+
+
+
+
+class Database:
+    '''The representation for a `twsm` database object.'''
+
+    _filename = None
+    _model = None
+    _workspaces = None
+
+
+    def _set_workspaces(self, model):
+        try:
+            self.workspaces = []
+            for workspace in model['workspaces']:
+                self.workspaces.append(Workspace(workspace))
+        except NameError:
+            msg = "Database can't be created from model without `workspaces`: "
+            msg += model
+            raise BadDatabaseError(msg)
+
+
+    def __init__(self, db_filename):
+        '''Constructs a `twsm` database object from the given `db_filename`.'''
+        self._model = yaml.load(open(db_filename, 'r'))
+        self._filename = db_filename
+        self._set_workspaces(self._model)
+
+
+    def filename(self):
+        '''Returns the name of the file that was used to instantiate this
+        `Database` object.
+        '''
+        return self._filename
+
+
+    def named_workspace(self, name):
+        '''Returns the options associated with the workspace with the given
+        name. If no workspace with this name is known to the database, `None`
+        is returned.
+        '''
+        for workspace in self.known_workspaces():
+            if workspace.name() == name:
+                return workspace
+
+
+    def known_workspaces(self):
+        '''Returns a list of all `twsm` workspaces known by this database.'''
+        # Makes a shallow copy of the workspaces.
+        return list(self.workspaces)
+
+
+    def running_workspaces(self):
+        '''Returns the list of all `twsm` workspaces known by this database and
+        currently running as `tmux` sessions.
+        '''
+        sessions = tmux_sessions()
+        return [w for w in self.workspaces if w.name() in sessions]
+
+
+    def json(self, pretty=False):
+        '''Returns pretty-printed JSON representation of the database.'''
+        if pretty:
+            return json.dumps(self._model, indent=2)
+        else:
+            return json.dumps(self._model)
+
+
+    def __str__(self):
+        return str(self._model)
+
+
+
+
+# Primary Handler Function ####################################################
+
+def handle(opts):
+    '''Handles the request described by the given set of parsed options.'''
+    database = Database(opts.database)
+    opts.verb_handler(database, opts)
+
+
+
+# Verb Handler Functions ######################################################
+
+def null_handler(database, opts):
+    '''A do-nothing handler.'''
+
+
+def attach_handler(database, opts):
+    '''The handler for the `attach` verb.'''
+
+    workspace = database.named_workspace(opts.workspace)
+
+    if workspace is None:
+        # Workspace not found.
+        msg = "The workspace named `{}` is not known in database `{}`"
+        msg = msg.format(opts.workspace, database.filename())
+        raise ValueError(msg)
+
+    elif workspace in database.running_workspaces():
+        # Workspace found and running.
+        tmux_attach(workspace)
+    else:
+        # Workspace found but not running.
+        tmux_start(workspace)
+
+
+def list_workspaces_handler(database, opts):
+    '''The handler for the `list-workspaces` verb.'''
+
+    if opts.all is True:
+        workspaces = database.known_workspaces()
+    else:
+        workspaces = database.running_workspaces()
+
+    for workspace in workspaces:
+        print(workspace)
+
+
+def workspace_name_handler(database, opts):
+    '''The handler for the `workspace-name` verb.'''
+    # TODO: Everything!
+    raise NotImplementedError()
+
+
+def dump_database_model_handler(database, opts):
+    '''The handler for the `dump-database-model` verb.'''
+    print(database.json(pretty=opts.pretty))
+
+
+
+
+# Helper Functions ############################################################
+
+def tmux_sessions():
+    '''Returns a set of strings of all currently running `tmux` sessions.'''
+    raw = subprocess.getoutput(r'tmux list-sessions -F "#{session_name}"')
+    return set(raw.splitlines())
+
+
+def tmux_start(workspace):
+    '''Start running a new `tmux` session for the given `workspace`.'''
+    root = os.path.expanduser(workspace.root())
+    name = workspace.name()
+    source = root + '/' + DEFAULT_SOURCE_FILE
+
+    if not os.path.exists(root):
+        msg = r"Workspace's root does not exit: {}:".format(workspace.root())
+        raise ValueError(msg)
+    if not os.path.exists(source):
+        msg = 'A tmux source file could not be found in the workspace root: {}'
+    # TODO: Use `source`
+    cmd = r"tmux new-session -c '{}' -s '{}'"
+    cmd = cmd.format(root, name)
+    subprocess.call(cmd, shell=True)
+
+
+def tmux_attach(workspace):
+    '''Attach to an already-running workspace'''
+    cmd = r"tmux attach-session -t '{}'"
+    cmd = cmd.format(workspace.name())
+    subprocess.call(cmd, shell=True)
+
+
+def build_parser():
+    '''Builds a parser capable of parsing and handling the user's request.
+
+    Returns a parser from the `argsparse` library. This parser can parse and
+    return the command line arguments with which `twsm` was invoked by calling
+    its `parse_opts()`. Any `opts` object returned by that method should have a
+    1-arity executable on it called `verb_handle()` to handle the particular
+    request, depending upon which verb was given.
+    '''
+
+    parser = argparse.ArgumentParser()
+
+    # Specify the verb-agnostic arguments:
+    parser.add_argument('-d', '--database', default=DEFAULT_DATABASE,
+                        help=HELP_MESSAGES['database'])
+
+    # If there is no verb, set the `verb_handler` to do nothing:
+    parser.set_defaults(verb_handler=null_handler)
+
+    # For each CLI verb, create a subparser within `parser`. Every subparser
+    # sets its own `verb_handler()` function by setting an executable as a
+    # default value.
+    verbs = parser.add_subparsers(title='verbs')
+
+    def add_verb(verb, aliases=None, handler=None):
+        '''Adds a verb to `parser` as a subparser; returns the subparser.
+
+        :param verb: A string of the verb to be added.
+        :param aliases: A list of strings representing aliases for the verb.
+        :param handler: A 2-arg function that takes a `database` and an `opts`.
+        '''
+        if aliases is None:
+            aliases = []
+        if handler is None:
+            handler = null_handler
+
+        subparser = verbs.add_parser(verb, aliases=aliases,
+                                     help=HELP_MESSAGES[verb])
+        subparser.set_defaults(verb_handler=handler)
+        return subparser
+
+    # attach
+    subparser = add_verb('attach', ['a'], attach_handler)
+    subparser.add_argument('workspace')
+
+    # list-workspaces
+    subparser = add_verb('list-workspaces', ['ls'], list_workspaces_handler)
+    subparser.add_argument('-a', '--all', action='store_true',
+                           help='List all known workspaces, not just running.')
+
+    # workspace-name
+    subparser = add_verb('workspace-name', ['name'], workspace_name_handler)
+    subparser.add_argument('directory')
+
+    # dump-database
+    subparser = add_verb('dump-database-model', ['db'],
+                         dump_database_model_handler)
+    subparser.add_argument('--pretty', action='store_true',
+                           help='Pretty-prints the database.')
+
+
+    return parser
+
+
+# Main Function ###############################################################
+
+def main():
+    '''The main entry point for the `twsm` executable.'''
+    parser = build_parser()
+    handle(parser.parse_args())
+
+
+main()
