@@ -29,18 +29,18 @@ HELP_MESSAGES = {
         .format(DEFAULT_DATABASE),
 
     # Verb Options:
-    'attach':
-        r"Attaches the terminal to <workspace>. Starts it first if necessary.",
+    'attach-workspace':
+        "Attaches the terminal to a workspace. Starts it first, if necessary.",
 
     'list-workspaces':
-        r"Prints a list of all currently running `twsm` workspaces to STDOUT.",
+        "Prints a newline-separated list of all currently running workspaces.",
 
-    'workspace-name':
-        r"Looks up the workspace name rooted at the given directory. If there "
-        r"is a workspace",
+    'list-rooted':
+        "Looks up the names of any workspaces rooted at the given directory. "
+        "This will print out zero or more newline-separated workspace names.",
 
-    'dump-database-model':
-        r"Dumps the `twsm` database's model to stdout as JSON.",
+    'dump-database':
+        "Dumps the `twsm` database's model to stdout as JSON.",
 }
 
 
@@ -58,8 +58,8 @@ class Workspace:
     '''The representation for a `twsm` workspace object.'''
 
     _model = None
-    _name = None
-    _root = None
+    _name = None  # A str representation of a valid `tmux` session name.
+    _root = None  # A str representation of an absolute path name.
 
     def _init_name(self, model):
         try:
@@ -72,7 +72,7 @@ class Workspace:
 
     def _init_root(self, model):
         try:
-            self._root = model['root']
+            self._root = abspath(model['root'])
         except ValueError:
             msg = "Workspace can't be created from a model without `root`: {}"
             msg = msg.format(model)
@@ -154,13 +154,24 @@ class Database:
 
 
     def named_workspace(self, name):
-        '''Returns the options associated with the workspace with the given
-        name. If no workspace with this name is known to the database, `None`
-        is returned.
+        '''Returns the workspace with the given name. If no workspace with this
+        name is known to the database, `None` is returned.
         '''
         for workspace in self.known_workspaces():
             if workspace.name() == name:
                 return workspace
+
+
+    def rooted_workspaces(self, root):
+        '''Returns a list of all workspaces that have the given root.
+
+        :type root: str representing an absolute path.
+        '''
+        rooted = list()
+        for workspace in self.known_workspaces():
+            if workspace.root() == root:
+                rooted.append(workspace)
+        return rooted
 
 
     def known_workspaces(self):
@@ -206,22 +217,34 @@ def null_handler(database, opts):
     '''A do-nothing handler.'''
 
 
-def attach_handler(database, opts):
-    '''The handler for the `attach` verb.'''
+def attach_workspace_handler(database, opts):
+    '''The handler for the `attach-workspace` verb.'''
 
-    workspace = database.named_workspace(opts.workspace)
+    workspace = None
 
-    if workspace is None:
-        # Workspace not found.
-        msg = "The workspace named `{}` is not known in database `{}`"
-        msg = msg.format(opts.workspace, database.filename())
-        raise ValueError(msg)
+    if opts.root is False:
+        # Find `workspace` by name.
+        name = opts.workspace
+        workspace = database.named_workspace(name)
+        if workspace is None:
+            msg = "A workspace named `{}` is not known in database `{}`"
+            msg = msg.format(opts.workspace, database.filename())
+            raise ValueError(msg)
 
-    elif workspace in database.running_workspaces():
-        # Workspace found and running.
+    else:
+        # Find `workspace` by root.
+        root = abspath(opts.workspace)
+        workspaces = database.rooted_workspaces(root)
+        if len(workspaces) != 1:
+            msg = "Expected exactly one workspace rooted at `{}`, but found {}"
+            msg = msg.format(opts.workspace, len(workspaces))
+            raise ValueError(msg)
+        workspace = workspaces[0]
+
+    # `workspace` has been found.
+    if workspace in database.running_workspaces():
         tmux_attach(workspace)
     else:
-        # Workspace found but not running.
         tmux_start(workspace)
 
 
@@ -241,16 +264,15 @@ def list_workspaces_handler(database, opts):
             print(workspace.name() + ': ' + workspace.root())
 
 
-def workspace_name_handler(database, opts):
-    '''The handler for the `workspace-name` verb.'''
-    abspath = lambda f: os.path.abspath(os.path.expanduser(f))
-    root = abspath(opts.directory)
+def list_rooted_handler(database, opts):
+    '''The handler for the `list-rooted` verb.'''
+    root = abspath(opts.root)
     for workspace in database.known_workspaces():
         if root == abspath(workspace.root()):
             print(workspace.name())
 
 
-def dump_database_model_handler(database, opts):
+def dump_database_handler(database, opts):
     '''The handler for the `dump-database-model` verb.'''
     print(database.json(pretty=opts.pretty))
 
@@ -263,6 +285,13 @@ def tmux_sessions():
     '''Returns a set of strings of all currently running `tmux` sessions.'''
     raw = subprocess.getoutput(r'tmux list-sessions -F "#{session_name}"')
     return set(raw.splitlines())
+
+
+def abspath(path):
+    '''Converts the given path to an absolute path by expanding a user
+    directories (`~`) and making any relative path absolute.
+    '''
+    return os.path.abspath(os.path.expanduser(path))
 
 
 def tmux_start(workspace):
@@ -285,7 +314,7 @@ def tmux_start(workspace):
         subprocess.call("cd '{}' && tmux source-file '{}'".format(root,source),
                         shell=True)
 
-    subprocess.call("tmux attach -t '{}'".format(name),
+    subprocess.call("tmux attach-session -t '{}'".format(name),
                     shell=True)
 
 
@@ -337,9 +366,11 @@ def build_parser():
         subparser.set_defaults(verb_handler=handler)
         return subparser
 
-    # attach
-    subparser = add_verb('attach', ['a'], attach_handler)
+    # attach-workspace
+    subparser = add_verb('attach-workspace', ['a', 'attach'],
+                         attach_workspace_handler)
     subparser.add_argument('workspace')
+    subparser.add_argument('--root', action='store_true')
 
     # list-workspaces
     subparser = add_verb('list-workspaces', ['ls'], list_workspaces_handler)
@@ -348,13 +379,13 @@ def build_parser():
     subparser.add_argument('-v', '--verbose', action='store_true',
                            help='Print all info about workspaces.')
 
-    # workspace-name
-    subparser = add_verb('workspace-name', ['name'], workspace_name_handler)
-    subparser.add_argument('directory')
+    # list-rooted
+    subparser = add_verb('list-rooted', ['root'], list_rooted_handler)
+    subparser.add_argument('root')
 
     # dump-database
-    subparser = add_verb('dump-database-model', ['db'],
-                         dump_database_model_handler)
+    subparser = add_verb('dump-database', ['db'],
+                         dump_database_handler)
     subparser.add_argument('--pretty', action='store_true',
                            help='Pretty-prints the database.')
 
