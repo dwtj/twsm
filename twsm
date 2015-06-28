@@ -270,17 +270,20 @@ def tmux_start(workspace):
     source = root + '/' + DEFAULT_SOURCE_FILE
 
     if not os.path.exists(root):
-        msg = r"Workspace's root does not exit: {}:".format(workspace.root())
+        msg = "Workspace's root does not exit: {}:".format(workspace.root())
         raise ValueError(msg)
 
-    subprocess.call(r"tmux new-session -c '{}' -s '{}' -d".format(root, name),
+    subprocess.call("tmux new-session -c '{}' -s '{}' -d".format(root, name),
                     shell=True)
 
     if os.path.exists(source):
-        subprocess.call("cd '{}'&& tmux source-file '{}'".format(root, source),
+        # In case .tmuxrc uses paths relative to a workspace's root, the file
+        # must be sourced from the workspace's root.
+        subprocess.call("cd '{}' && tmux source-file '{}'".format(root,source),
                         shell=True)
 
-    subprocess.call(r"tmux attach -t '{}'".format(name), shell=True)
+    subprocess.call("tmux attach -t '{}'".format(name),
+                    shell=True)
 
 
 def tmux_attach(workspace):
