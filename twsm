@@ -276,7 +276,7 @@ def tmux_start(workspace):
     # TODO: Use `source`
     cmd = r"tmux new-session -c '{}' -s '{}' -d".format(root, name)
     subprocess.call(cmd, shell=True)
-    cmd = r"cd {} && tmux source-file '{}'".format(root, source)
+    cmd = r"cd '{}' && tmux source-file '{}'".format(root, source)
     subprocess.call(cmd, shell=True)
     cmd = r"tmux attach -t '{}'".format(name)
     subprocess.call(cmd, shell=True)
