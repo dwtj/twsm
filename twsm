@@ -243,8 +243,11 @@ def list_workspaces_handler(database, opts):
 
 def workspace_name_handler(database, opts):
     '''The handler for the `workspace-name` verb.'''
-    # TODO: Everything!
-    raise NotImplementedError()
+    abspath = lambda f: os.path.abspath(os.path.expanduser(f))
+    root = abspath(opts.directory)
+    for workspace in database.known_workspaces():
+        if root == abspath(workspace.root()):
+            print(workspace.name())
 
 
 def dump_database_model_handler(database, opts):
