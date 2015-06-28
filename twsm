@@ -111,6 +111,22 @@ class Database:
     _workspaces = None
 
 
+    @staticmethod
+    def _check_validity(database):
+        '''Checks that the given database passes all tests for validity. If a
+        validity test fails, an appropriate `BadDatabaseError` is raised.
+        '''
+        # Check that all workspaces have unique names.
+        names = set()
+        for workspace in database.known_workspaces():
+            name = workspace.name()
+            if name in names:
+                msg = "Found two workspaces named `{}`".format(name)
+                raise BadDatabaseError(msg)
+            else:
+                names.add(name)
+
+
     def _set_workspaces(self, model):
         try:
             self.workspaces = []
@@ -127,6 +143,7 @@ class Database:
         self._model = yaml.load(open(db_filename, 'r'))
         self._filename = db_filename
         self._set_workspaces(self._model)
+        Database._check_validity(self)
 
 
     def filename(self):
