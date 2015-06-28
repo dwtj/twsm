@@ -5,7 +5,6 @@ import argparse
 import os
 import os.path
 import subprocess
-import enum
 
 import yaml
 import json
@@ -254,8 +253,11 @@ def tmux_start(workspace):
     if not os.path.exists(source):
         msg = 'A tmux source file could not be found in the workspace root: {}'
     # TODO: Use `source`
-    cmd = r"tmux new-session -c '{}' -s '{}'"
-    cmd = cmd.format(root, name)
+    cmd = r"tmux new-session -c '{}' -s '{}' -d".format(root, name)
+    subprocess.call(cmd, shell=True)
+    cmd = r"cd {} && tmux source-file '{}'".format(root, source)
+    subprocess.call(cmd, shell=True)
+    cmd = r"tmux attach -t '{}'".format(name)
     subprocess.call(cmd, shell=True)
 
 
