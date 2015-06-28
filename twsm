@@ -264,6 +264,7 @@ def tmux_sessions():
 
 def tmux_start(workspace):
     '''Start running a new `tmux` session for the given `workspace`.'''
+
     root = os.path.expanduser(workspace.root())
     name = workspace.name()
     source = root + '/' + DEFAULT_SOURCE_FILE
@@ -271,15 +272,15 @@ def tmux_start(workspace):
     if not os.path.exists(root):
         msg = r"Workspace's root does not exit: {}:".format(workspace.root())
         raise ValueError(msg)
-    if not os.path.exists(source):
-        msg = 'A tmux source file could not be found in the workspace root: {}'
-    # TODO: Use `source`
-    cmd = r"tmux new-session -c '{}' -s '{}' -d".format(root, name)
-    subprocess.call(cmd, shell=True)
-    cmd = r"cd '{}' && tmux source-file '{}'".format(root, source)
-    subprocess.call(cmd, shell=True)
-    cmd = r"tmux attach -t '{}'".format(name)
-    subprocess.call(cmd, shell=True)
+
+    subprocess.call(r"tmux new-session -c '{}' -s '{}' -d".format(root, name),
+                    shell=True)
+
+    if os.path.exists(source):
+        subprocess.call("cd '{}'&& tmux source-file '{}'".format(root, source),
+                        shell=True)
+
+    subprocess.call(r"tmux attach -t '{}'".format(name), shell=True)
 
 
 def tmux_attach(workspace):
