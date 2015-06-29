@@ -45,10 +45,16 @@ HELP_MESSAGES = {
 }
 
 
-# Exceptions ##################################################################
+# Exceptions/Errors ###########################################################
 
-class BadDatabaseError(Exception):
+class BadDatabaseError(BaseException):
     '''Thrown to signify that a user-defined database file is in some way
+    malformed.'''
+
+
+
+class BadConfigurationError(BaseException):
+    '''An error to be raised when a configuration is for some reason invalid or
     malformed.'''
 
 
@@ -81,8 +87,9 @@ class Workspace:
 
 
     def __init__(self, model):
-        '''Takes a singleton set whose key is a workspace name and whose value
-        is a dictionary of properties of that workspace.'''
+        '''Instantiates a Workspace instance from the given model. Raises a
+        `BadDatabaseError` if `model` is malformed in some way.
+        '''
         self._model = model
         self._init_name(model)
         self._init_root(model)
@@ -128,13 +135,13 @@ class Database:
                 names.add(name)
 
 
-    def _set_workspaces(self, model):
+    def _init_workspaces(self, model):
         try:
-            self.workspaces = []
+            self._workspaces = list()
             for workspace in model['workspaces']:
-                self.workspaces.append(Workspace(workspace))
+                self._workspaces.append(Workspace(workspace))
         except NameError:
-            msg = "Database can't be created from model without `workspaces`: "
+            msg = "Can't create Database from a model without `workspaces`: "
             msg += model
             raise BadDatabaseError(msg)
 
@@ -143,7 +150,7 @@ class Database:
         '''Constructs a `twsm` database object from the given `db_filename`.'''
         self._model = yaml.load(open(db_filename, 'r'))
         self._filename = db_filename
-        self._set_workspaces(self._model)
+        self._init_workspaces(self._model)
         Database._check_validity(self)
 
 
@@ -178,7 +185,7 @@ class Database:
     def known_workspaces(self):
         '''Returns a list of all `twsm` workspaces known by this database.'''
         # Makes a shallow copy of the workspaces.
-        return list(self.workspaces)
+        return list(self._workspaces)
 
 
     def running_workspaces(self):
@@ -186,7 +193,7 @@ class Database:
         currently running as `tmux` sessions.
         '''
         sessions = tmux_sessions()
-        return [w for w in self.workspaces if w.name() in sessions]
+        return [w for w in self._workspaces if w.name() in sessions]
 
 
     def json(self, pretty=False):
@@ -202,17 +209,107 @@ class Database:
 
 
 
+# Configuration Model Representations #########################################
 
-# Primary Handler Function ####################################################
+class Window:
+    '''The representation of a `twsm` window within a configuration file.'''
+
+    _model = None
+    _name = None      # The desired name for the window.
+    _commands = None  # A list of the commands to be sent to the window.
+
+
+    def _init_name(self, model):
+        if (not isinstance(model, dict)) or (len(model) != 1):
+            msg = "Window can't be created from a model that isn't singleton dict: "
+            msg += model
+            raise BadConfigurationError(msg)
+
+        # Loop always runs one iteration.
+        for name in model.keys():
+            self._name = name
+
+        if not isinstance(self._name, str):
+            msg = "Window can't be created from a model whose key isn't str: "
+            msg += model
+            raise BadConfigurationError(msg)
+
+
+    def _init_commands(self, model):
+        commands = model[self._name]
+        if commands is None:
+            # Model contains no commands.
+            self._commands = list()
+        elif isinstance(commands, str):
+            # Model contains just one command.
+            self._commands = [commands]
+        else:
+            # Model contains a list of commands.
+            self._commands = commands
+            # Check that each command is a `str`.
+            for command in self._commands:
+                if not isinstance(command, str):
+                    msg = ("Window can't be created from a model whose values "
+                           "aren't `str`: {}".format(model))
+                    raise BadConfigurationError(msg)
+
+    
+    def __init__(self, model):
+        '''Instantiates a Window instance from the given model. Raises a
+        `BadConfigurationError` if `model` is malformed in some way. `model` is
+        expected to be a singleton `dict`. Its key is the name of the window.
+        The value associated with this key represents a sequence of commands,
+        represented by either `None`, a single `str`, or a list of `str`.
+        '''
+        self._model = model
+        self._init_name(model)
+        self._init_commands(model)
+
+
+class Configuration:
+    '''The representation of a `twsm` configuration file.'''
+
+    _model = None
+    _filename = None # The name of the file used to make this configuration.
+    _windows = None  # The list of window objects in this configuration.
+
+    @staticmethod
+    def _check_validity(configuration):
+        '''Checks that the given configuration passes all tests for validity.
+        If a validity test fails, an appropriate `BadConfigurationError` is
+        raised.
+        '''
+        # No validity checks needed yet.
+        pass
+
+
+    def _init_windows(self, model):
+        try:
+            self._windows = list()
+            for window in model['windows']:
+                self._windows.append(Window(window))
+        except NameError:
+            msg = "Can't create Configuration from a model without `windows`: "
+            msg += model
+            raise BadConfigurationError(msg)
+
+
+    def __init__(self, conf_filename):
+        '''Constructs a `twsm` Configuration using the given `conf_filename`.'''
+        self._model = yaml.load(open(conf_filename, 'r'))
+        self._filename = conf_filename
+        self._init_windows(self._model)
+        Configuration._check_validity(self)
+
+
+
+# Primary and Auxiliary Handler Function ######################################
 
 def handle(opts):
     '''Handles the request described by the given set of parsed options.'''
     database = Database(opts.database)
     opts.verb_handler(database, opts)
 
-
-
-# Verb Handler Functions ######################################################
 
 def null_handler(database, opts):
     '''A do-nothing handler.'''
