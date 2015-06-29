@@ -5,6 +5,7 @@ import argparse
 import os
 import os.path
 import subprocess
+import tempfile
 
 import argcomplete
 import json
@@ -14,7 +15,9 @@ import yaml
 
 # Global Constants ############################################################
 
-# The default filename for tmux sources.
+# The default filenames of tmux source files and `twsm` config files. These are
+# expected to be possibly be found in the root of a `twsm` workspace.
+DEFAULT_CONFIG_FILE = '.twsm.yml'
 DEFAULT_SOURCE_FILE = '.tmuxrc'
 
 # The location for the default `twsm` database.
@@ -301,6 +304,10 @@ class Configuration:
         self._init_windows(self._model)
         Configuration._check_validity(self)
 
+    def tmuxrc(self):
+        '''Returns the `tmuxrc` representation of this object as a `str`.'''
+        # TODO: Everything!
+        return "new-window"
 
 
 # Primary and Auxiliary Handler Function ######################################
@@ -341,7 +348,7 @@ def attach_workspace_handler(database, opts):
 
     # `workspace` has been found.
     if workspace in database.running_workspaces():
-        tmux_attach(workspace)
+        tmux_attach(workspace.name())
     else:
         tmux_start(workspace)
 
@@ -397,29 +404,50 @@ def tmux_start(workspace):
 
     root = os.path.expanduser(workspace.root())
     name = workspace.name()
+    config = root + '/' + DEFAULT_CONFIG_FILE
     source = root + '/' + DEFAULT_SOURCE_FILE
 
     if not os.path.exists(root):
         msg = "Workspace's root does not exit: {}:".format(workspace.root())
         raise ValueError(msg)
 
-    subprocess.call("tmux new-session -c '{}' -s '{}' -d".format(root, name),
-                    shell=True)
+    tmux_new(name, root, join=False)
+
+    if os.path.exists(config):
+        config = Configuration(config)
+        tmuxrc = bytes(config.tmuxrc(), 'utf-8')
+        tmuxrc_file = tempfile.NamedTemporaryFile()
+        tmuxrc_file.write(tmuxrc)
+        tmuxrc_file.flush()
+        tmux_source(tmuxrc_file.name, root)
+        tmuxrc_file.close()
 
     if os.path.exists(source):
-        # In case .tmuxrc uses paths relative to a workspace's root, the file
-        # must be sourced from the workspace's root.
-        subprocess.call("cd '{}' && tmux source-file '{}'".format(root,source),
-                        shell=True)
+        tmux_source(source, root)
 
-    subprocess.call("tmux attach-session -t '{}'".format(name),
-                    shell=True)
+    tmux_attach(name)
 
 
-def tmux_attach(workspace):
-    '''Attach to an already-running workspace'''
-    cmd = r"tmux attach-session -t '{}'"
-    cmd = cmd.format(workspace.name())
+def tmux_new(name, startdir, join=True):
+    '''Creates a new tmux session and optionally joins that session.'''
+    cmd = "tmux new-session -s '{}' -c '{}'".format(name, startdir)
+    if join is False:
+        cmd += " -d"
+    subprocess.call(cmd, shell=True)
+
+
+def tmux_source(sourcefile, sourcedir):
+    '''Runs `tmux source-file` with the given `sourcefile` from within the
+    given `sourcedir`. If there are any relative paths specified in the
+    `sourcefile`, then they should all be relative to the `sourcedir`.
+    '''
+    cmd = "cd '{}' && tmux source-file '{}'".format(sourcedir, sourcefile)
+    subprocess.call(cmd, shell=True)
+
+
+def tmux_attach(name):
+    '''Attach to an already-running tmux session that has the given `name`.'''
+    cmd = "tmux attach-session -t '{}'".format(name)
     subprocess.call(cmd, shell=True)
 
 
