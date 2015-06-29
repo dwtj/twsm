@@ -1,0 +1,18 @@
+#compdef twsm
+# A simple `zsh` auto-completion script for `twsm`.
+
+local -a _verbs
+_verbs=('attach-workspace:attach to or start up a particular workspace'
+        'list-workspaces:list all workspaces known by the database'
+        'list-rooted:list all of the workspaces rooted at a particular dir'
+        'dump-database:dump the database to JSON')
+
+if (( CURRENT == 2 )); then
+  _describe -t verbs "command verb" _verbs
+elif (( CURRENT == 3 )); then
+  case $words[2] in
+    attach-workspace|attach|a)
+        compadd $(twsm list-workspaces --all)
+    ;;
+  esac
+fi
