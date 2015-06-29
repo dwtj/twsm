@@ -1,0 +1,5 @@
+windows:
+- 'git':
+- 'src:twsm': 'vim twsm'
+- 'twsm.yml': 'vim .twsm.yml'
+- 'test':
