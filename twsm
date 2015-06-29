@@ -269,6 +269,19 @@ class Window:
         self._init_commands(model)
 
 
+    def name(self):
+        '''Returns the name of this window as a `str`.
+        '''
+        return self._name
+
+
+    def commands(self):
+        '''Returns the commands to be sent to this window as a list of `str`.
+        '''
+        return list(self._commands)
+
+
+
 class Configuration:
     '''The representation of a `twsm` configuration file.'''
 
@@ -298,7 +311,8 @@ class Configuration:
 
 
     def __init__(self, conf_filename):
-        '''Constructs a `twsm` Configuration using the given `conf_filename`.'''
+        '''Constructs a `twsm` Configuration using the given `conf_filename`.
+        '''
         self._model = yaml.load(open(conf_filename, 'r'))
         self._filename = conf_filename
         self._init_windows(self._model)
@@ -306,8 +320,25 @@ class Configuration:
 
     def tmuxrc(self):
         '''Returns the `tmuxrc` representation of this object as a `str`.'''
-        # TODO: Everything!
-        return "new-window"
+        new_window = lambda n, i: "new-window -k -n '{}' -t {}".format(n, i)
+        send_cmd = lambda cmd: "send-keys '{}' C-m".format(cmd)
+        select_window = lambda i: "select-window -t {}".format(i)
+
+        tmuxrc = list()
+        for idx, window in enumerate(self._windows):
+            tmuxrc.append(new_window(window.name(), idx))
+            for cmd in window.commands():
+                tmuxrc.append(send_cmd(cmd))
+
+        # If there are more than two windows, set the second-to-last selected
+        # window to be window #1.
+        if len(self._windows) > 1:
+            tmuxrc.append(select_window(1))
+
+        # Always select window #0 at the end.
+        tmuxrc.append(select_window(0))
+
+        return '\n'.join(tmuxrc)
 
 
 # Primary and Auxiliary Handler Function ######################################
